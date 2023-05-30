@@ -59,7 +59,7 @@ def test_post():
     return jsonify(data)
 
 # 获取新闻标题的智能提示
-@app.route('/suggest/newsheadline')
+@app.route('/suggest/headline')
 def search_news():
     headline = request.args.get('headline')  # 获取用户输入的标题部分
     amount = request.args.get('amount') or 10  # 如果没有传入 amount 参数，默认返回10条新闻
@@ -68,7 +68,8 @@ def search_news():
     news_list = News.query.filter(News.headline.like('%' + headline + '%')).limit(amount).all()
 
     # 返回查询结果
-    result = [item.headline for item in news_list]
+    result = [{'name': item.headline, 'id': item.id } for item in news_list]
+
     return jsonify({'suggestions': result})
 
 # 获取用户ID的智能提示
