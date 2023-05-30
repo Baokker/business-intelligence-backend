@@ -71,5 +71,21 @@ def search_news():
     result = [item.headline for item in news_list]
     return jsonify({'suggestions': result})
 
+# 获取用户ID的智能提示
+@app.route('/suggest/userid')
+def search_user():
+    userID = request.args.get('userID')  # 获取用户输入的小部分ID
+    userID_str = str(userID)
+
+    amount = request.args.get('amount') or 10  # 如果没有传入 amount 参数，默认返回10条新闻
+
+    # 使用 SQLAlchemy 进行查询
+    user_list = User.query.filter(User.id.like('%' + userID_str + '%')).limit(amount).all()
+
+    # 返回查询结果
+    result = [item.id for item in user_list]
+    
+    return jsonify({'suggestions': result})
+
 if __name__ == '__main__':
     app.run()
