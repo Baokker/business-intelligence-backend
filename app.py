@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
+import datetime
 # import happybase
 import pymysql
 
@@ -8,7 +10,7 @@ app = Flask(__name__)
 # mysql config
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:bbbIII2023@47.101.216.242/bbbiii'
 db = SQLAlchemy(app)
-
+CORS(app, resources=r'/*') # 注册CORS, "/*" 允许访问所有api
 # # hbase
 # conn = happybase.Connection(host='localhost', port=9090)
 # table = conn.table('mytable')
@@ -22,7 +24,7 @@ class Log(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=False)
     news_id = db.Column(db.Integer, nullable=False)
-    start_ts = db.Column(db.Integer, nullable=False)
+    start_dt = db.Column(db.DateTime, nullable=False)
     duration = db.Column(db.Integer, nullable=False)
 
 class News(db.Model):
@@ -58,6 +60,34 @@ def test_post():
     # return json data
     return jsonify(data)
 
+# 获取单新闻的流行度
+@app.route('/singlenews/popularity')
+def get_popularity_single():
+    news_id = request.args.get('newsID')  # 获取新闻id
+    start_date = datetime.datetime.strptime(request.args.get('startDate'), '%Y-%m-%d %H:%M:%S')
+    end_date = datetime.datetime.strptime(request.args.get('endDate'), '%Y-%m-%d %H:%M:%S')
+    
+    # 设置一个小时的时间间隔
+    delta = datetime.timedelta(hours=1)
+    
+    popularity_list = []
+    while start_date <= end_date:
+        # 计算当前时间段的起始和结束时间
+        current_start_date = start_date - delta
+        current_end_date = start_date
+        
+        # 查询在当前时间段内查看过该新闻的用户数量
+        query = Log.query.filter(Log.news_id==news_id, Log.start_dt>=current_start_date, Log.start_dt<current_end_date)
+        popularity = query.with_entities(db.func.count(Log.user_id)).scalar()
+        
+        # 将当前时间段的结果加入到数组中
+        popularity_list.append({'date': current_start_date.strftime('%Y-%m-%d %H:%M:%S'), 'popularity': popularity})
+        
+        # 将时间段向后移动一个小时
+        start_date = start_date + delta
+    
+    return jsonify(popularity_list)
+
 # 获取新闻标题的智能提示
 @app.route('/suggest/headline')
 def search_news():
@@ -87,6 +117,7 @@ def search_user():
     result = [item.id for item in user_list]
     
     return jsonify({'suggestions': result})
+
 
 if __name__ == '__main__':
     app.run()
