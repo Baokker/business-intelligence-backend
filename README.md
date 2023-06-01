@@ -4,7 +4,7 @@
 # How to run
 
 ```
-pip install flask SQLAlchemy pymysql # 应该够了
+pip install flask flask_sqlalchemy pymysql # 应该够了
 python app.py
 ```
 
