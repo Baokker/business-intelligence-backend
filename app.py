@@ -203,7 +203,6 @@ def get_interest_change():
     # remove empty value
     data = {k: v for k, v in data.items() if v}
     user_id = int(data['userID'])
-    category_id = int(data['category_id'])
     start_date = datetime.datetime.strptime(data['startDate'], '%Y-%m-%d %H:%M:%S')
     end_date = datetime.datetime.strptime(data['endDate'], '%Y-%m-%d %H:%M:%S')
     # return json data
@@ -221,20 +220,20 @@ def get_interest_change():
         hours = 24
     delta = datetime.timedelta(hours=hours)
 
-    popularity_list = []
+    popularity_list = [{'id': i+1, 'trends': []} for i in range(18)]
     # 初始化查询所需的参数
     start_time = start_date - delta
     end_time = start_date
     while end_time <= end_date:
         # 查询在当前时间段内查看过该新闻的用户数量
-        query = db.session.query(Log.user_id).enable_eagerloads(True) \
-            .filter(Log.user_id == user_id, Log.category_id == category_id, Log.start_dt.between(start_time, end_time))
-
-        # 查询对应的行数
-        popularity = query.count()
-
-        # 将当前时间段的结果加入到数组中
-        popularity_list.append({'datetime': end_time.strftime('%Y-%m-%d %H:%M:%S'), 'popularity': popularity})
+        query = db.session.query(Log.user_id, Log.category_id).enable_eagerloads(True) \
+            .filter(Log.user_id == user_id, Log.start_dt.between(start_time, end_time))
+        res = query.all()
+        for item in popularity_list:
+            item['trends'].append({'datetime': end_time.strftime('%Y-%m-%d %H:%M:%S'), 'popularity': 0})
+        for result in res:
+            category_id = result[1]  # 获取 result 元组的第二个元素，也就是 category_id
+            popularity_list[category_id - 1]['trends'][-1]['popularity'] += 1
 
         # 将时间段向后移动一个时间间隔
         start_time = end_time
