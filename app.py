@@ -121,6 +121,7 @@ def get_popularity_single():
 @app.route('/category/popularity')
 def get_popularity_newstopic():
     category_id = request.args.get('categoryID')  # 获取新闻id
+    print(request.args.get('startDate'))
     start_date = datetime.datetime.strptime(request.args.get('startDate'), '%Y-%m-%d %H:%M:%S')
     end_date = datetime.datetime.strptime(request.args.get('endDate'), '%Y-%m-%d %H:%M:%S')
 
@@ -195,7 +196,6 @@ def search_user():
     return jsonify({'suggestions': result})
 
 
-# test post
 @app.route('/user/interest', methods=['POST'])
 def get_interest_change():
     # receive json data
@@ -220,7 +220,7 @@ def get_interest_change():
         hours = 24
     delta = datetime.timedelta(hours=hours)
 
-    popularity_list = [{'id': i+1, 'trends': []} for i in range(18)]
+    popularity_list = [{'id': i + 1, 'trends': []} for i in range(18)]
     # 初始化查询所需的参数
     start_time = start_date - delta
     end_time = start_date
@@ -243,5 +243,46 @@ def get_interest_change():
     return jsonify(result_dict)
 
 
+@app.route('/complex_search', methods=['POST'])
+def complex_search():
+    data = request.get_json()
+    data = {k: v for k, v in data.items() if v is not None and v != ''}
+    filters_1 = []
+    users = data['users']
+    categories = data['categories']
+    clickMinTime = int(data['clickMinTime'])
+    titleMinLength = int(data['titleMinLength'])
+    titleMaxLength = int(data['titleMaxLength'])
+    if 'startDate' in data:
+        start_date = datetime.datetime.strptime(data['startDate'], '%Y-%m-%d %H:%M:%S')
+        filters_1.append(Log.start_dt >= start_date)
+    if 'endDate' in data:
+        end_date = datetime.datetime.strptime(data['endDate'], '%Y-%m-%d %H:%M:%S')
+        filters_1.append(Log.start_dt <= end_date)
+    if len(users) > 0:
+        filters_1.append(Log.user_id.in_(users))
+    if len(categories) > 0:
+        filters_1.append(Log.category_id.in_(categories))
+    if clickMinTime > 0:
+        filters_1.append(Log.duration >= clickMinTime)
+    query_1 = db.session.query(Log.news_id).enable_eagerloads(True).filter(*filters_1)
+    news_ids = [x[0] for x in query_1.distinct().all()]
+    filters_2 = [News.id.in_(news_ids)]
+    if titleMinLength > 0:
+        filters_2.append(db.func.length(News.headline) >= titleMinLength)
+    if titleMaxLength > 0:
+        filters_2.append(db.func.length(News.headline) <= titleMaxLength)
+    query_2 = db.session.query(News.id, News.topic, News.headline, News.category).enable_eagerloads(True).filter(*filters_2)
+    news = query_2.all()
+    if not news:
+        return jsonify({'data': []})
+    # 将查询结果转换为对应的 JSON 格式
+    data = [{'id': item[0], 'topic': item[1], 'headline': item[2], 'category': item[3]} for item in news]
+    result = {'data': data}
+
+    # 将结果序列化为 JSON，并在 HTTP 响应中返回
+    return jsonify(result)
+
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', debug=True)
