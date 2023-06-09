@@ -1,16 +1,32 @@
-from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 import datetime
+from flask import Flask, render_template, jsonify, request
+from flask_socketio import SocketIO, emit
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+from sqlalchemy import create_engine
+import random
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql.expression import func
+from sqlite3 import Connection as SQLite3Connection
 # import happybase
+import pymysql
 import pymysql
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'secret!'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+engine = create_engine('mysql+pymysql://root:bbbIII2023@47.101.216.242/bbbiii')
+Session = sessionmaker(bind=engine)
+session = Session()
 
 # mysql config
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:bbbIII2023@47.101.216.242/bbbiii'
 db = SQLAlchemy(app)
 CORS(app, resources=r'/*')  # 注册CORS, "/*" 允许访问所有api
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 
 # # hbase
@@ -42,6 +58,15 @@ class News(db.Model):
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+
+
+# 建立 RealTimeLog 模型
+class RealTimeLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer)
+    news_id = db.Column(db.Integer)
+    start_dt = db.Column(db.DateTime)
+    duration = db.Column(db.Integer)
 
 
 @app.route('/')
@@ -272,7 +297,8 @@ def complex_search():
         filters_2.append(db.func.length(News.headline) >= titleMinLength)
     if titleMaxLength > 0:
         filters_2.append(db.func.length(News.headline) <= titleMaxLength)
-    query_2 = db.session.query(News.id, News.topic, News.headline, News.category).enable_eagerloads(True).filter(*filters_2)
+    query_2 = db.session.query(News.id, News.topic, News.headline, News.category).enable_eagerloads(True).filter(
+        *filters_2)
     news = query_2.all()
     if not news:
         return jsonify({'data': []})
@@ -284,5 +310,96 @@ def complex_search():
     return jsonify(result)
 
 
+# 定义读取数据库中实时日志的函数
+def read_real_time_log():
+    logs = RealTimeLog.query.order_by(RealTimeLog.id.desc()).limit(10).all()
+    return [(log.user_id, log.news_id, log.start_dt.strftime('%Y-%m-%d %H:%M:%S'), log.duration) for log in
+            reversed(logs)]
+
+
+# 定义当客户端连接时的回调函数
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected')
+    # 向客户端发送历史日志记录
+    emit('update', read_real_time_log())
+
+
+# 定义当收到“get_news_ids”事件时的回调函数
+@socketio.on('get_news_ids')
+def handle_get_news_ids(user_id):
+    # 查询匹配用户 ID 的最近 10 条新闻记录
+    logs = RealTimeLog.query.filter_by(user_id=user_id).order_by(RealTimeLog.id.desc()).limit(10).all()
+    news_ids = [(log.news_id, log.duration, log.start_dt.strftime('%Y-%m-%d %H:%M:%S')) for log in reversed(logs)]
+    # 查询对应新闻的 headline 和 category
+    news_list = []
+    for news_id, duration, start_dt in news_ids:
+        news = News.query.filter_by(id=news_id).first()
+        if news:
+            news_list.append(
+                {'news_id': news_id, 'headline': news.headline, 'topic': news.topic, 'category': news.category,
+                 'duration': duration,
+                 'start_dt': start_dt})
+    # 调用推荐算法，获取推荐结果
+    recommendations = get_recommendations(user_id, news_list)
+
+    # 将推荐结果转换成必要的格式，发送到前端
+    rec_list = [{'news_id': news.id, 'headline': news.headline, 'topic': news.topic, 'category': news.category} for news
+                in recommendations]
+    # print(rec_list)
+    # 向客户端发送新闻 ID 列表和对应新闻的 headline 和 category
+    emit('news_ids', {'user_id': user_id, 'news_list': news_list, 'rec_list': rec_list})
+
+
+def get_recommendations(user_id, news_list):
+    # 新建一个空列表，用于存储筛选后的新闻
+    filtered_news = []
+
+    # print(news_list)
+    # 遍历 news_list，将 duration 大于 2 的新闻加入 filtered_news 中
+    for news in news_list:
+        if news['duration'] > 2:
+            filtered_news.append(news)
+
+    # 先获取 start_dt 最新的新闻，将其加入 filtered_news 中
+    latest_news = max(filtered_news, key=lambda x: datetime.datetime.strptime(str(x['start_dt']), '%Y-%m-%d %H:%M:%S'))
+    filtered_news.append(latest_news)
+
+    # 统计各个分类出现的次数
+    category_counts = {}
+    for news in filtered_news:
+        category = news['category']
+        category_counts[category] = category_counts.get(category, 0) + 1
+
+    # 计算各个分类在历史点击记录中的占比
+    total_count = sum(category_counts.values())
+    category_ratios = {category: count / total_count for category, count in category_counts.items()}
+
+    recommended_news = []
+    for category, ratio in category_ratios.items():
+        num_recommendations = int(ratio * 10)
+
+        # 使用 SQLAlchemy 进行查询并随机排序
+        category_news = News.query.filter_by(category=category).order_by(func.rand()).limit(num_recommendations).all()
+
+        recommended_news.extend(category_news)
+
+    return recommended_news
+
+
+@socketio.on('update')
+def handle_connect():
+    print('Client updating')
+    # 向客户端发送历史日志记录
+    emit('update', read_real_time_log())
+
+
+# 定义当客户端断开连接时的回调函数
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
+
+
 if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000)
     app.run(host='0.0.0.0', debug=True)
