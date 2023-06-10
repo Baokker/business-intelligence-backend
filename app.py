@@ -300,11 +300,12 @@ def complex_search():
     query_2 = db.session.query(News.id, News.topic, News.headline, News.category).enable_eagerloads(True).filter(
         *filters_2)
     news = query_2.all()
+    count = len(news)
     if not news:
-        return jsonify({'data': []})
+        return jsonify({'data': [], 'count': 0})
     # 将查询结果转换为对应的 JSON 格式
     data = [{'id': item[0], 'topic': item[1], 'headline': item[2], 'category': item[3]} for item in news]
-    result = {'data': data}
+    result = {'data': data, 'count': count}
 
     # 将结果序列化为 JSON，并在 HTTP 响应中返回
     return jsonify(result)
